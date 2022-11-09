@@ -1,18 +1,9 @@
 defmodule ExampleDistributedSystem do
-  @moduledoc """
-  Documentation for `ExampleDistributedSystem`.
-  """
+  @moduledoc false
 
-  @doc """
-  Hello world.
+  use Application
 
-  ## Examples
-
-      iex> ExampleDistributedSystem.hello()
-      :world
-
-  """
-  def hello do
-    :world
+  def start(_, _) do
+    ExampleDistributedSystem.Supervisor.start_link([])
   end
 end
