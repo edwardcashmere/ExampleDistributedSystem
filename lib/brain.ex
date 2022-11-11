@@ -12,10 +12,10 @@ defmodule ExampleDistributedSystem.Brain do
   def init(:ok) do
     default_state = %{
       leader: nil,
-      pong_timeout: nil,
+      pong_timeout_ref: nil,
       timeout: 1000,
       elections?: true,
-      alive_timeout: nil,
+      alive_timeout_ref: nil,
       i_am_the_king_timer_ref: nil,
       alive_replies: [],
       waiting_for_king_reply?: false
@@ -65,11 +65,11 @@ defmodule ExampleDistributedSystem.Brain do
   # set waiting_for_king_reply? to false
   def handle_cast(
         :pong,
-        %{waiting_for_king_reply?: true, pong_timeout: pong_timeout} = state
+        %{waiting_for_king_reply?: true, pong_timeout_ref: pong_timeout_ref} = state
       ) do
     Logger.info("i received a pong from my leader")
-    Process.cancel_timer(pong_timeout)
-    new_state = %{state | waiting_for_king_reply?: false, pong_timeout: nil}
+    Process.cancel_timer(pong_timeout_ref)
+    new_state = %{state | waiting_for_king_reply?: false, pong_timeout_ref: nil}
 
     {:noreply, new_state}
   end
@@ -78,10 +78,14 @@ defmodule ExampleDistributedSystem.Brain do
   # discard the pong message
   # elections already began
   def handle_cast(:pong, %{waiting_for_king_reply?: false} = state) do
-    Logger.info(" I get ponged here")
+    Logger.info(" I received ponged msg but the timer already ran out and elections alrady began")
     {:noreply, state}
   end
 
+  # received i_am_the_king msg when elections are ongoing
+  # I check if the i_am_the_king_timer_ref was ever set
+  # if it was set I cancel the timer and ping the new leader
+  # otherwise i just ping the new leader and set the node to leader in state
   def handle_cast(
         {:i_am_the_king, node},
         %{i_am_the_king_timer_ref: i_am_the_king_timer_ref, elections?: true} = state
@@ -103,6 +107,8 @@ defmodule ExampleDistributedSystem.Brain do
     {:noreply, new_state}
   end
 
+  # received i_am_the_king msg when elections are not happenning
+  # I ping the new leader and set the node to leader in state
   def handle_cast(
         {:i_am_the_king, node},
         %{elections?: false} = state
@@ -116,24 +122,21 @@ defmodule ExampleDistributedSystem.Brain do
     {:noreply, new_state}
   end
 
-  # senior nodes msg received reply
-  # with fine thanks
-  # start timing reply for a proclamation from the senior nodes
-  # if the timer is nil which it will be when we receive the the first msg
-  # set atimer and add it to state, with the next replies the timer will be present
-  # cancel the previous timer and set a new one
-  # track who replied
-  # setting a timer for last expected reply
+  # reply from senior nodes with :fine_thanks
+  # if i_am_the_king_timer_ref is set we cancel it and set it again
+  # other wise we are setting it for first time
+  # we add the node that replied to alive_replies[] list the we cancel the
+  # :alivetimeout timer and set it again
+  # we update staate with :alive_timeout, :alive_replies[], i_am_the_king_timer_ref
   def handle_cast(
         {:fine_thanks, node},
         %{
           alive_replies: alive_replies,
-          alive_timeout: alive_timeout,
+          alive_timeout_ref: alive_timeout_ref,
           timeout: timeout,
           i_am_the_king_timer_ref: i_am_the_king_timer_ref
         } = state
       ) do
-    IO.inspect(state, label: "state at fine thanks reply")
     Logger.info("Node #{inspect(node())} got a reply from #{inspect(node)}}")
 
     i_am_the_king_timer_ref =
@@ -146,12 +149,12 @@ defmodule ExampleDistributedSystem.Brain do
 
     alive_replies = [node | alive_replies]
 
-    Process.cancel_timer(alive_timeout)
-    alive_timeout = Process.send_after(self(), :alive_timeout, timeout)
+    Process.cancel_timer(alive_timeout_ref)
+    alive_timeout_ref = Process.send_after(self(), :alive_timeout, timeout)
 
     new_state = %{
       state
-      | alive_timeout: alive_timeout,
+      | alive_timeout_ref: alive_timeout_ref,
         alive_replies: alive_replies,
         i_am_the_king_timer_ref: i_am_the_king_timer_ref
     }
@@ -159,16 +162,20 @@ defmodule ExampleDistributedSystem.Brain do
     {:noreply, new_state}
   end
 
+  # we get ping with :alive? msg from juniors
+  # with no pong_timeout_ref set
+  # if there is a leader set or elections? is ongoing
+  # we proclaim ourselves king and reset state
+  # otherwise we start elections again
   def handle_cast(
         {:alive?, from_node},
-        %{leader: leader, pong_timeout: nil, elections?: elections?} = state
+        %{leader: leader, pong_timeout_ref: nil, elections?: elections?} = state
       ) do
     Logger.info("Node #{inspect(node())} is alive?}")
     GenServer.cast({__MODULE__, from_node}, {:fine_thanks, Node.self()})
 
     if leader == Node.self() or elections? do
-      proclaim_myself_king(state)
-      {:noreply, state}
+      {:noreply, proclaim_myself_king(state)}
     else
       new_state = %{state | elections?: true} |> maybe_begin_elections()
 
@@ -176,23 +183,25 @@ defmodule ExampleDistributedSystem.Brain do
     end
   end
 
-  # when i receive an :alive? message
-  # respond with :fine_thanks start elections myself
-  # if i received alive and i am the most senior proclaim myself king
+  # when i receive an :alive? message with pong_timeout_ref still set
+  # respond with :fine_thanks cancel pong_timeout_ref
+  # start elections myself
+  # if there is a leader set or elections? ongoing we return state as it is
+  # otherwise we start elections
   def handle_cast(
         {:alive?, from_node},
-        %{leader: leader, pong_timeout: pong_timeout, elections?: elections?} = state
+        %{leader: leader, pong_timeout_ref: pong_timeout_ref, elections?: elections?} = state
       ) do
     Logger.info("Node #{inspect(node())} is alive?}")
     GenServer.cast({__MODULE__, from_node}, {:fine_thanks, Node.self()})
 
-    Process.cancel_timer(pong_timeout)
+    Process.cancel_timer(pong_timeout_ref)
 
     if leader == Node.self() or elections? do
-      Process.cancel_timer(pong_timeout)
-      {:noreply, state}
+      {:noreply, %{state | pong_timeout_ref: pong_timeout_ref}}
     else
-      new_state = %{state | elections?: true} |> maybe_begin_elections()
+      new_state =
+        %{state | elections?: true, pong_timeout_ref: pong_timeout_ref} |> maybe_begin_elections()
 
       {:noreply, new_state}
     end
@@ -205,7 +214,7 @@ defmodule ExampleDistributedSystem.Brain do
   @impl true
   def handle_info(:alive_timeout, %{alive_replies: [], elections?: true} = state) do
     Logger.info(
-      ":alivetimout elections true but 0 replies  I senior nodes are dead I can ascend the throne"
+      "All seniors are considered dead so I hereby procliam myself king of the westeros"
     )
 
     {:noreply, proclaim_myself_king(state)}
@@ -215,15 +224,13 @@ defmodule ExampleDistributedSystem.Brain do
   # the nodes that didnt send a reply are pronounced dead
   # if no node reply I promounce myself king and broadcast the message to all other
   def handle_info(:alive_timeout, %{alive_replies: alive_replies, elections?: true} = state) do
-    Logger.info(
-      "alivetimout elections true but n replies clearly i am not the most senior node end elections"
-    )
+    Logger.info("Some heirs from House Targaryan replied , clear I cannot ascend the throne")
 
     senior_nodes_considered_dead =
       Enum.filter(Node.list(), &(&1 > Node.self())) |> Enum.filter(&(&1 not in alive_replies))
 
     Enum.each(senior_nodes_considered_dead, fn node ->
-      Logger.info("this node #{inspect(node)} is dead")
+      Logger.info("This senior who was next in line to be leader #{inspect(node)} is dead")
     end)
 
     new_state = %{state | elections?: false}
@@ -231,17 +238,18 @@ defmodule ExampleDistributedSystem.Brain do
   end
 
   def handle_info(:alive_timeout, %{alive_replies: _alive_replies, elections?: false} = state) do
-    Logger.info("ignoring alivetimeout when elections is false")
+    Logger.info(
+      "elections timed out and we have some replies but we are not doing elections discard this message"
+    )
 
     {:noreply, state}
   end
 
   # if i get i_am_the_king_timeout, i waited for one of the senior nodes to procliam
   # themselves king but they failed hence I become the king
-
   def handle_info(:i_am_the_king_timeout, state) do
     Logger.info(
-      ":i_am_the_king_timeout elections true but n replies clearly i am not the most senior node end elections"
+      "I waited for any member of House Targaryan to reply reply and be proclaimed king but none replied, so I must ccheck if aim next in line before i scend the throne"
     )
 
     case check_seniority?() do
@@ -284,9 +292,9 @@ defmodule ExampleDistributedSystem.Brain do
     else
       send_ping(leader)
       Process.send_after(self(), :ping, timeout)
-      pong_timeout = Process.send_after(self(), :pong_timeout, 4 * timeout)
+      pong_timeout_ref = Process.send_after(self(), :pong_timeout, 4 * timeout)
 
-      new_state = %{state | pong_timeout: pong_timeout, waiting_for_king_reply?: true}
+      new_state = %{state | pong_timeout_ref: pong_timeout_ref, waiting_for_king_reply?: true}
       {:noreply, new_state}
     end
   end
@@ -296,17 +304,12 @@ defmodule ExampleDistributedSystem.Brain do
   # we begin elections to name a new leader
   def handle_info(:pong_timeout, %{elections?: false} = state) do
     Logger.info(" the leader did not reply starting elections")
-    new_state = %{state | elections?: true, pong_timeout: nil, waiting_for_king_reply?: false}
+    new_state = %{state | elections?: true, pong_timeout_ref: nil, waiting_for_king_reply?: false}
 
     new_state = maybe_begin_elections(new_state)
 
     {:noreply, new_state}
   end
-
-  # i have received a a king proclaimation from a node()
-  # but i am also doing elections update the leader
-  # and
-  #
 
   defp maybe_begin_elections(%{elections?: true, timeout: timeout} = state) do
     # check seniority
@@ -327,7 +330,7 @@ defmodule ExampleDistributedSystem.Brain do
           |> GenServer.abcast(__MODULE__, {:alive?, Node.self()})
 
           alive_timeout_ref = Process.send_after(self(), :alive_timeout, timeout)
-          %{state | alive_timeout: alive_timeout_ref}
+          %{state | alive_timeout_ref: alive_timeout_ref}
       end
 
     new_state

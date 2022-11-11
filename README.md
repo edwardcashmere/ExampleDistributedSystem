@@ -1,6 +1,25 @@
 # ExampleDistributedSystem
+## Setup
+open a shell and run 
+>  iex --name a@127.0.0.1 -S mix
 
-**TODO: Add description**
+open another shell and run 
+
+>  iex --name b@127.0.0.1 -S mix 
+
+open a third shell and run
+
+>  iex --name c@127.0.0.1 -S mix
+
+The naming is not arbitrary, these are the names supported in the config file, any other name would have to added to the config file before running the app. Because the nodes connecting depends on whats in  the config file. 
+
+The testing of various criteria is a bit manual currently, you stop senior node and watch elections happen and the next senior node take over, start the senior node again and watch the junior node surrender control. Notice the effect of adding a junior node to the cluster or removing it, do the same for senior nodes.
+
+
+Improvements to be made.
+
+* make the name discovery of nodes and connection dynamic and not static
+
 
 ## Installation
 
