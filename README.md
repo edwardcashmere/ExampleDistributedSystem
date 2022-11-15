@@ -15,6 +15,15 @@ The naming is not arbitrary, these are the names supported in the config file, a
 
 The testing of various criteria is a bit manual currently, you stop senior node and watch elections happen and the next senior node take over, start the senior node again and watch the junior node surrender control. Notice the effect of adding a junior node to the cluster or removing it, do the same for senior nodes.
 
+##
+Added a two important functions
+> leave_cluster --> called as ExampleDistributedSystem.leave_cluster from terminal
+
+All it does is kill the node's process hence it will not be available in the cluster any longer. To rejoin cluster call ExampleDistributedSystem.start("","") in the same iex shell.
+
+> check_state
+
+This function when called should show you the state of the current nodes's brain/Genserver 
 
 Improvements to be made.
 

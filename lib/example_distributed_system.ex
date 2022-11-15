@@ -19,19 +19,34 @@ defmodule ExampleDistributedSystem do
     end
   end
 
+  defp join_cluster do
+    DynamicSupervisor.start_child(
+      ExampleDistributedSystem.DynamicSupervisor,
+      {ExampleDistributedSystem.Brain, []}
+    )
+  end
+
+  def leave_cluster do
+    DynamicSupervisor.terminate_child(
+      ExampleDistributedSystem.DynamicSupervisor,
+      :erlang.whereis(ExampleDistributedSystem.Brain)
+    )
+  end
+
+  def check_state do
+    :sys.get_state(ExampleDistributedSystem.Brain)
+  end
+
   defp start_node_and_connect(nodes) do
     case Enum.reject(nodes, fn node -> node in connect_to_node(nodes) end) do
       [] ->
         Logger.error("all nodes failed to connect")
 
       connected_nodes ->
-        IO.inspect("#{inspect(connected_nodes)} nodes connected succesfuly")
+        Logger.info("#{inspect(connected_nodes)} nodes connected succesfuly")
     end
 
-    DynamicSupervisor.start_child(
-      ExampleDistributedSystem.DynamicSupervisor,
-      {ExampleDistributedSystem.Brain, []}
-    )
+    join_cluster()
   end
 
   defp connect_to_node([]), do: []

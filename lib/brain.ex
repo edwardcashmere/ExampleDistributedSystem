@@ -55,7 +55,7 @@ defmodule ExampleDistributedSystem.Brain do
   # reply with :pong
   @impl true
   def handle_cast({:ping, from_node}, state) do
-    Logger.info("I am the leader i get pinged")
+    # Logger.info("I am the leader i get pinged")
     GenServer.cast({__MODULE__, from_node}, :pong)
     {:noreply, state}
   end
@@ -67,7 +67,7 @@ defmodule ExampleDistributedSystem.Brain do
         :pong,
         %{waiting_for_king_reply?: true, pong_timeout_ref: pong_timeout_ref} = state
       ) do
-    Logger.info("i received a pong from my leader")
+    # Logger.info("i received a pong from my leader")
     Process.cancel_timer(pong_timeout_ref)
     new_state = %{state | waiting_for_king_reply?: false, pong_timeout_ref: nil}
 
@@ -78,7 +78,7 @@ defmodule ExampleDistributedSystem.Brain do
   # discard the pong message
   # elections already began
   def handle_cast(:pong, %{waiting_for_king_reply?: false} = state) do
-    Logger.info(" I received ponged msg but the timer already ran out and elections alrady began")
+    # Logger.info(" I received ponged msg but the timer already ran out and elections alrady began")
     {:noreply, state}
   end
 
@@ -113,7 +113,7 @@ defmodule ExampleDistributedSystem.Brain do
         {:i_am_the_king, node},
         %{elections?: false} = state
       ) do
-    Logger.info("no elections are going on hence #{inspect(node)}")
+    Logger.info("no elections are going on hence #{inspect(node)} becomes king")
 
     send(self(), :ping)
 
@@ -233,7 +233,7 @@ defmodule ExampleDistributedSystem.Brain do
       Logger.info("This senior who was next in line to be leader #{inspect(node)} is dead")
     end)
 
-    new_state = %{state | elections?: false}
+    new_state = %{state | elections?: false, alive_replies: []}
     {:noreply, new_state}
   end
 
@@ -271,7 +271,6 @@ defmodule ExampleDistributedSystem.Brain do
         %{leader: leader, timeout: timeout, waiting_for_king_reply?: true} = state
       ) do
     send_ping(leader)
-
     Process.send_after(self(), :ping, timeout)
 
     {:noreply, state}
@@ -330,7 +329,7 @@ defmodule ExampleDistributedSystem.Brain do
           |> GenServer.abcast(__MODULE__, {:alive?, Node.self()})
 
           alive_timeout_ref = Process.send_after(self(), :alive_timeout, timeout)
-          %{state | alive_timeout_ref: alive_timeout_ref}
+          %{state | alive_timeout_ref: alive_timeout_ref, alive_replies: []}
       end
 
     new_state
